@@ -77,6 +77,21 @@ if ($role === 'field_worker') {
         $todayLocations = $stLoc->fetchAll();
         $locationReady  = true;
 
+        // Calculate total km travelled today using Haversine
+        $myTotalKmToday = 0.0;
+        $prevLat = null; $prevLng = null;
+        foreach ($todayLocations as $loc) {
+            $lat = (float)$loc['lat']; $lng = (float)$loc['lng'];
+            if ($lat === 0.0 && $lng === 0.0) { continue; }
+            if ($prevLat !== null) {
+                $dLat = deg2rad($lat - $prevLat);
+                $dLng = deg2rad($lng - $prevLng);
+                $a = sin($dLat/2)**2 + cos(deg2rad($prevLat))*cos(deg2rad($lat))*sin($dLng/2)**2;
+                $myTotalKmToday += 6371.0 * 2 * atan2(sqrt($a), sqrt(1-$a));
+            }
+            $prevLat = $lat; $prevLng = $lng;
+        }
+
         // Active tasks for location tag
         $stMyTasks = $db->prepare(
             "SELECT id, title FROM tasks
@@ -361,6 +376,11 @@ include __DIR__ . '/includes/header.php';
         <?php if ($locationReady): ?>
         <span class="badge bg-success ms-1" id="locCountBadge"><?= count($todayLocations) ?></span>
         <span class="text-muted fw-normal small ms-1">pings today</span>
+        <?php if (isset($myTotalKmToday) && $myTotalKmToday > 0): ?>
+        <span class="badge bg-warning text-dark ms-2">
+          <i class="bi bi-speedometer2 me-1"></i><?= number_format($myTotalKmToday, 2) ?> km
+        </span>
+        <?php endif; ?>
         <?php endif; ?>
       </div>
       <div class="card-body">
