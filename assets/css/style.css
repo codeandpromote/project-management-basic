@@ -1,0 +1,484 @@
+/* ============================================================
+   HRMS · Modern SaaS Stylesheet
+   Stack: Bootstrap 5 + custom properties
+   ============================================================ */
+
+/* ── CSS Custom Properties ────────────────────────────────── */
+:root {
+  --sidebar-width:    260px;
+  --topbar-height:    56px;
+  --header-height:    64px;
+
+  /* Brand palette */
+  --clr-primary:      #4F46E5;   /* indigo-600 */
+  --clr-primary-dk:   #3730A3;   /* indigo-700 */
+  --clr-sidebar:      #0F172A;   /* slate-900  */
+  --clr-sidebar-text: rgba(255,255,255,0.80);
+  --clr-sidebar-muted:rgba(255,255,255,0.45);
+  --clr-body-bg:      #F1F5F9;   /* slate-100  */
+  --clr-card-bg:      #FFFFFF;
+  --clr-border:       #E2E8F0;
+
+  --radius-card: 0.75rem;
+  --shadow-card: 0 1px 3px rgba(0,0,0,0.07), 0 4px 12px rgba(0,0,0,0.06);
+}
+
+/* ── Base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--clr-body-bg);
+  color: #1E293B;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Login page ───────────────────────────────────────────── */
+.hrms-login-bg {
+  background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #312E81 100%);
+  min-height: 100vh;
+}
+
+.login-card {
+  border-radius: 1.25rem;
+  background: #fff;
+}
+
+.login-logo {
+  width: 72px;
+  height: 72px;
+  background: linear-gradient(135deg, var(--clr-primary), #7C3AED);
+  border-radius: 1rem;
+}
+
+/* ── App layout ───────────────────────────────────────────── */
+.hrms-app {
+  background: var(--clr-body-bg);
+}
+
+/* Fixed sidebar (desktop) */
+.hrms-sidebar-fixed {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: var(--sidebar-width);
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 1030;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+/* Sidebar (shared styles for fixed + offcanvas) */
+.hrms-sidebar {
+  background: var(--clr-sidebar) !important;
+  color: var(--clr-sidebar-text);
+}
+
+.sidebar-brand {
+  font-size: 1rem;
+  letter-spacing: -.01em;
+}
+
+.sidebar-link {
+  color: var(--clr-sidebar-text) !important;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+
+.sidebar-link:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #fff !important;
+}
+
+.sidebar-link.active {
+  background: rgba(79,70,229,0.35) !important;
+  color: #fff !important;
+  box-shadow: inset 3px 0 0 var(--clr-primary);
+}
+
+.sidebar-link i {
+  font-size: 1rem;
+  width: 1.25rem;
+  text-align: center;
+}
+
+/* Mobile topbar */
+.hrms-topbar {
+  background: var(--clr-sidebar) !important;
+  height: var(--topbar-height);
+  position: sticky;
+  top: 0;
+  z-index: 1025;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+
+/* Main wrapper */
+.hrms-main {
+  margin-left: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 992px) {
+  .hrms-main {
+    margin-left: var(--sidebar-width);
+  }
+}
+
+/* Desktop header bar */
+.hrms-header {
+  height: var(--header-height);
+  background: #fff;
+  border-bottom: 1px solid var(--clr-border);
+  padding: 0 1.5rem;
+  position: sticky;
+  top: 0;
+  z-index: 1020;
+}
+
+/* Content area */
+.hrms-content {
+  flex: 1;
+}
+
+/* ── Avatar ───────────────────────────────────────────────── */
+.avatar-circle {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--clr-primary), #7C3AED);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.avatar-sm {
+  width: 30px;
+  height: 30px;
+  font-size: 0.75rem;
+}
+
+/* ── Cards ────────────────────────────────────────────────── */
+.card {
+  border-radius: var(--radius-card) !important;
+}
+
+/* ── Stat Cards ───────────────────────────────────────────── */
+.stat-card {
+  border-radius: var(--radius-card) !important;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1) !important;
+}
+
+.stat-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+.stat-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #1E293B;
+}
+
+.stat-label {
+  font-size: 0.75rem;
+  color: #64748B;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+/* ── Attendance Card ──────────────────────────────────────── */
+.attendance-status-grid {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--clr-body-bg);
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.att-time-block {
+  flex: 1;
+  text-align: center;
+}
+
+.att-time-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.att-time-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1E293B;
+  font-variant-numeric: tabular-nums;
+}
+
+.att-divider {
+  color: #CBD5E1;
+  font-size: 1.1rem;
+}
+
+.checkin-done-banner {
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.85rem;
+  color: #166534;
+}
+
+.checkout-requirements {
+  background: #FFF7ED;
+  border: 1px dashed #FED7AA;
+  border-radius: 0.5rem;
+  padding: 0.6rem 0.75rem;
+}
+
+/* ── Task List ────────────────────────────────────────────── */
+.task-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--clr-border);
+  transition: background 0.12s;
+}
+
+.task-item:last-child {
+  border-bottom: none;
+}
+
+.task-item:hover {
+  background: #F8FAFC;
+}
+
+.task-item.task-overdue {
+  border-left: 3px solid #EF4444;
+  background: #FFF5F5;
+}
+
+.task-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.task-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: #1E293B;
+}
+
+.task-desc {
+  font-size: 0.8rem;
+  color: #64748B;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-meta {
+  font-size: 0.72rem;
+  color: #94A3B8;
+}
+
+.task-item-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* ── Buttons ──────────────────────────────────────────────── */
+.btn-primary {
+  background: var(--clr-primary);
+  border-color: var(--clr-primary);
+}
+
+.btn-primary:hover, .btn-primary:focus {
+  background: var(--clr-primary-dk);
+  border-color: var(--clr-primary-dk);
+}
+
+.btn-xs {
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  border-radius: 0.35rem;
+}
+
+/* ── Badges ───────────────────────────────────────────────── */
+.badge {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.3em 0.6em;
+}
+
+/* ── Tables ───────────────────────────────────────────────── */
+.table th {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748B;
+}
+
+.table td {
+  vertical-align: middle;
+}
+
+/* ── Nav tabs (task tabs) ─────────────────────────────────── */
+.nav-tabs .nav-link {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #64748B;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.6rem 1rem;
+  border-radius: 0;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.nav-tabs .nav-link.active {
+  color: var(--clr-primary);
+  border-bottom-color: var(--clr-primary);
+  background: transparent;
+}
+
+.nav-tabs .nav-link:hover:not(.active) {
+  color: #1E293B;
+  border-bottom-color: #CBD5E1;
+  background: transparent;
+}
+
+/* ── GPS status ───────────────────────────────────────────── */
+#gpsStatus.gps-ok      { background: #DCFCE7; color: #166534; border-color: #BBF7D0; }
+#gpsStatus.gps-denied  { background: #FEF9C3; color: #854D0E; border-color: #FDE68A; }
+#gpsStatus.gps-error   { background: #FEE2E2; color: #991B1B; border-color: #FECACA; }
+#gpsStatus.gps-loading { background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; }
+
+/* ── Modals ───────────────────────────────────────────────── */
+.modal-content {
+  border-radius: var(--radius-card) !important;
+}
+
+/* ── Scrollbar (WebKit) ───────────────────────────────────── */
+.hrms-sidebar-fixed::-webkit-scrollbar { width: 4px; }
+.hrms-sidebar-fixed::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+
+/* ── Toast ────────────────────────────────────────────────── */
+.toast-container { z-index: 9999; }
+
+/* ── Form focus ───────────────────────────────────────────── */
+.form-control:focus, .form-select:focus {
+  border-color: var(--clr-primary);
+  box-shadow: 0 0 0 0.2rem rgba(79,70,229,0.15);
+}
+
+/* ── Utility ──────────────────────────────────────────────── */
+.border-4 { border-width: 4px !important; }
+
+/* ── Responsive tweaks ────────────────────────────────────── */
+@media (max-width: 575.98px) {
+  .stat-value { font-size: 1.4rem; }
+  .att-time-value { font-size: 1rem; }
+  .hrms-content { padding: 0.75rem !important; }
+}
+
+/* ── Location Tracker ─────────────────────────────────────── */
+.location-timeline { padding: 0.5rem 1rem; }
+
+.loc-entry { position: relative; }
+
+.loc-entry-connector .loc-dot-col::after {
+  content: '';
+  display: block;
+  width: 2px;
+  background: #E2E8F0;
+  position: absolute;
+  left: 19px;
+  top: 32px;
+  bottom: 0;
+}
+
+.loc-dot-col { width: 38px; position: relative; }
+
+.loc-dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--clr-primary);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+}
+
+.loc-dot-first { background: #22C55E; }
+.loc-dot-last  { background: #F59E0B; }
+
+/* Compact location pill (dashboard) */
+.loc-pill { padding: 0.4rem 0; border-bottom: 1px solid #F1F5F9; }
+.loc-pill:last-child { border-bottom: none; }
+
+.loc-pill-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22C55E;
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+/* ── KPI Dashboard ────────────────────────────────────────── */
+.kpi-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--clr-primary), #7C3AED);
+  color: #fff;
+  font-size: 1.6rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kpi-score-ring svg { display: block; }
+
+/* Progress bar override */
+.progress { border-radius: 99px; background: #F1F5F9; }
+.progress-bar { border-radius: 99px; }
