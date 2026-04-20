@@ -260,16 +260,35 @@ function handleTaskComplete(e) {
   const form     = document.getElementById('completeTaskForm');
   const taskId   = document.getElementById('completeTaskId').value;
   const submitBtn = form.querySelector('[type="submit"]');
+  const origLabel = submitBtn.innerHTML;
 
   submitBtn.disabled = true;
 
-  const formData = new FormData(form);
-  formData.append('action', 'complete');
-  formData.append('csrf_token', (window.HRMS && window.HRMS.csrfToken) ? window.HRMS.csrfToken : '');
+  const fileInput = form.querySelector('input[name="proof_file"]');
+  const rawFile   = fileInput && fileInput.files && fileInput.files[0];
+  const needsCompress = rawFile && rawFile.type && rawFile.type.indexOf('image/') === 0
+                        && rawFile.size >= 800 * 1024;
 
-  fetch('task_handler.php', { method: 'POST', body: formData })
+  if (needsCompress) {
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Compressing image…';
+  }
+
+  compressImageIfNeeded(rawFile).then(function (finalFile) {
+    const formData = new FormData(form);
+    formData.append('action', 'complete');
+    formData.append('csrf_token', (window.HRMS && window.HRMS.csrfToken) ? window.HRMS.csrfToken : '');
+
+    if (finalFile && rawFile && finalFile !== rawFile) {
+      formData.set('proof_file', finalFile, finalFile.name || 'photo.jpg');
+    }
+
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading…';
+
+    return fetch('task_handler.php', { method: 'POST', body: formData });
+  })
     .then(r => r.json())
     .then(data => {
+      submitBtn.innerHTML = origLabel;
       submitBtn.disabled = false;
 
       if (data.success) {
@@ -296,9 +315,67 @@ function handleTaskComplete(e) {
         showToast(data.message, 'danger');
       }
     }).catch(() => {
+      submitBtn.innerHTML = origLabel;
       submitBtn.disabled = false;
       showToast('Network error. Please try again.', 'danger');
     });
+}
+
+// ============================================================
+//  Image Compression (auto-shrink large photos before upload)
+// ============================================================
+// Non-image files pass through untouched.
+// Small images (< 800 KB) pass through untouched.
+// Large images are resized to max 1600px on the long edge
+// and re-encoded as JPEG at ~75% quality.
+// Falls back to the original file on any error.
+function compressImageIfNeeded(file) {
+  return new Promise(function (resolve) {
+    if (!file) { resolve(file); return; }
+    if (!file.type || file.type.indexOf('image/') !== 0) { resolve(file); return; }
+    if (file.size < 800 * 1024) { resolve(file); return; }
+
+    var MAX_DIM = 1600;
+    var QUALITY = 0.75;
+
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      var img = new Image();
+      img.onload = function () {
+        var w = img.width, h = img.height;
+        if (w > MAX_DIM || h > MAX_DIM) {
+          if (w >= h) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
+          else        { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
+        }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(file); return; }
+        ctx.drawImage(img, 0, 0, w, h);
+
+        var origName = file.name || 'photo.jpg';
+        var base     = origName.replace(/\.[^.]+$/, '');
+        var newName  = base + '.jpg';
+
+        if (!canvas.toBlob) { resolve(file); return; }
+        canvas.toBlob(function (blob) {
+          if (!blob) { resolve(file); return; }
+          if (blob.size >= file.size) { resolve(file); return; }
+          try {
+            resolve(new File([blob], newName, { type: 'image/jpeg' }));
+          } catch (e) {
+            // Old browsers without File constructor
+            blob.name = newName;
+            resolve(blob);
+          }
+        }, 'image/jpeg', QUALITY);
+      };
+      img.onerror = function () { resolve(file); };
+      img.src = ev.target.result;
+    };
+    reader.onerror = function () { resolve(file); };
+    reader.readAsDataURL(file);
+  });
 }
 
 // ============================================================
