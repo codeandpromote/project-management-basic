@@ -1,7 +1,9 @@
 <?php
 // ============================================================
 //  HRMS · Task AJAX Handler
-//  POST actions: start | complete
+//  POST actions: complete | delete
+//  (The old `start` action was removed — tasks now move from
+//   pending → in_progress only when a worker logs GPS against them.)
 // ============================================================
 declare(strict_types=1);
 
@@ -43,16 +45,6 @@ if ($user['role'] !== 'admin' && (int)$task['user_id'] !== $uid) {
 }
 
 switch ($action) {
-
-    // ── Mark In-Progress ─────────────────────────────────────
-    case 'start':
-        if ($task['status'] !== 'pending') {
-            exit(json_encode(['success' => false,
-                'message' => 'Task cannot be started (status: ' . $task['status'] . ').']));
-        }
-        $db->prepare("UPDATE tasks SET status='in_progress' WHERE id=?")
-           ->execute([$taskId]);
-        exit(json_encode(['success' => true, 'message' => 'Task started.', 'status' => 'in_progress']));
 
     // ── Complete Task ─────────────────────────────────────────
     case 'complete':

@@ -614,9 +614,12 @@ include __DIR__ . '/includes/header.php';
             </div>
             <?php endif; ?>
             <input type="file" class="form-control" id="dayEndFile" name="day_end_file"
-                   accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg,.zip"
+                   accept="image/jpeg,image/png,.pdf,.doc,.docx,.xls,.xlsx,.zip"
                    <?= $hasDayEndFile ? '' : 'required' ?>>
-            <div class="form-text">PDF, Word, Excel, Image, ZIP — max <?= MAX_FILE_MB ?> MB</div>
+            <div class="form-text">
+              PDF, Word, Excel, Image, ZIP — max <?= MAX_FILE_MB ?> MB.
+              Large photos are auto-compressed before upload.
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -653,8 +656,12 @@ include __DIR__ . '/includes/header.php';
           <div class="mb-0">
             <label class="form-label fw-semibold small">Proof File <span class="text-danger">*</span></label>
             <input type="file" class="form-control" name="proof_file"
-                   accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.zip" required>
-            <div class="form-text">Max <?= MAX_FILE_MB ?> MB</div>
+                   accept="image/jpeg,image/png,.pdf,.doc,.docx,.zip"
+                   capture="environment" required>
+            <div class="form-text">
+              Max <?= MAX_FILE_MB ?> MB. Large photos are auto-compressed before upload.
+              <br><small class="text-muted">iPhone users: set Camera &rarr; Formats &rarr; Most Compatible.</small>
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -820,13 +827,9 @@ function renderTaskList(array $tasks, string $emptyMsg): void
                     <i class="bi bi-paperclip"></i>
                   </a>';
         }
-        // Actions
-        if ($t['status'] === 'pending') {
-            echo '<button class="btn btn-sm btn-outline-info btn-start-task"
-                          data-task-id="' . (int)$t['id'] . '" title="Mark in-progress">
-                    <i class="bi bi-play-fill"></i>
-                  </button>';
-        }
+        // Actions — "Start Task" button removed.
+        // Tasks only move from pending → in_progress when the worker
+        // logs their location and tags it to that task.
         if (in_array($t['status'], ['pending','in_progress'], true)) {
             echo '<button class="btn btn-sm btn-success btn-complete-task"
                           data-task-id="' . (int)$t['id'] . '"

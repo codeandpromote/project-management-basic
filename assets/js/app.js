@@ -50,22 +50,7 @@ document.addEventListener('DOMContentLoaded', function () {
     dayEndForm.addEventListener('submit', handleDayEnd);
   }
 
-  // ── Task: Start (in-progress) ────────────────────────────
-  document.querySelectorAll('.btn-start-task').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id = btn.dataset.taskId;
-      postAction('task_handler.php', { action: 'start', task_id: id })
-        .then(data => {
-          if (data.success) {
-            showToast(data.message, 'info');
-            updateTaskBadge(id, 'in_progress');
-            btn.remove();
-          } else {
-            showToast(data.message, 'danger');
-          }
-        });
-    });
-  });
+  // ── Task: Start button removed — promotion now only via Log-My-Location ──
 
   // ── Task: Complete ───────────────────────────────────────
   document.querySelectorAll('.btn-complete-task').forEach(btn => {
@@ -219,36 +204,53 @@ function handleDayEnd(e) {
   spinner.classList.remove('d-none');
   icon.classList.add('d-none');
 
-  const formData = new FormData(form);
-  formData.append('action', 'day_end');
-  formData.append('csrf_token', (window.HRMS && window.HRMS.csrfToken) ? window.HRMS.csrfToken : '');
+  const fileInput = form.querySelector('input[name="day_end_file"]');
+  const rawFile   = fileInput && fileInput.files && fileInput.files[0];
 
-  fetch('attendance_handler.php', { method: 'POST', body: formData })
+  const resetUi = function () {
+    submitBtn.disabled = false;
+    spinner.classList.add('d-none');
+    icon.classList.remove('d-none');
+  };
+
+  compressImageIfNeeded(rawFile).then(function (result) {
+    const finalFile = result && result.file ? result.file : rawFile;
+
+    const formData = new FormData(form);
+    formData.append('action', 'day_end');
+    formData.append('csrf_token', (window.HRMS && window.HRMS.csrfToken) ? window.HRMS.csrfToken : '');
+
+    if (finalFile && rawFile && finalFile !== rawFile) {
+      formData.set('day_end_file', finalFile, finalFile.name || 'photo.jpg');
+    }
+
+    if (result && !result.skipped && result.newSize) {
+      showToast(
+        'Photo compressed: ' + formatBytes(result.origSize) + ' → ' + formatBytes(result.newSize),
+        'info'
+      );
+    }
+
+    return fetch('attendance_handler.php', { method: 'POST', body: formData });
+  })
     .then(r => r.json())
     .then(data => {
-      submitBtn.disabled = false;
-      spinner.classList.add('d-none');
-      icon.classList.remove('d-none');
-
+      resetUi();
       if (data.success) {
         showToast(data.message, 'success');
         if (dayEndModal) { dayEndModal.hide(); }
-        // Enable checkout button if eligible
         const btnOut = document.getElementById('btnCheckOut');
         if (btnOut && data.can_checkout) {
           btnOut.disabled = false;
           btnOut.title    = 'Check out now';
         }
-        // Reload to refresh requirement indicators
         setTimeout(() => location.reload(), 1000);
       } else {
         showToast(data.message, 'danger');
       }
-    }).catch(() => {
-      submitBtn.disabled = false;
-      spinner.classList.add('d-none');
-      icon.classList.remove('d-none');
-      showToast('Network error. Please try again.', 'danger');
+    }).catch(function (err) {
+      resetUi();
+      showToast(err && err.message ? err.message : 'Network error. Please try again.', 'danger');
     });
 }
 
@@ -267,19 +269,28 @@ function handleTaskComplete(e) {
   const fileInput = form.querySelector('input[name="proof_file"]');
   const rawFile   = fileInput && fileInput.files && fileInput.files[0];
   const needsCompress = rawFile && rawFile.type && rawFile.type.indexOf('image/') === 0
-                        && rawFile.size >= 800 * 1024;
+                        && rawFile.size >= 600 * 1024;
 
   if (needsCompress) {
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Compressing image…';
   }
 
-  compressImageIfNeeded(rawFile).then(function (finalFile) {
+  compressImageIfNeeded(rawFile).then(function (result) {
+    const finalFile = result && result.file ? result.file : rawFile;
+
     const formData = new FormData(form);
     formData.append('action', 'complete');
     formData.append('csrf_token', (window.HRMS && window.HRMS.csrfToken) ? window.HRMS.csrfToken : '');
 
     if (finalFile && rawFile && finalFile !== rawFile) {
       formData.set('proof_file', finalFile, finalFile.name || 'photo.jpg');
+    }
+
+    if (result && !result.skipped && result.newSize) {
+      showToast(
+        'Photo compressed: ' + formatBytes(result.origSize) + ' → ' + formatBytes(result.newSize),
+        'info'
+      );
     }
 
     submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading…';
@@ -296,16 +307,13 @@ function handleTaskComplete(e) {
         if (completeTaskModal) { completeTaskModal.hide(); }
         form.reset();
 
-        // Update badge in the task list
         updateTaskBadge(taskId, 'completed');
 
-        // Remove action buttons for that task
         const item = document.querySelector(`.task-item[data-task-id="${taskId}"]`);
         if (item) {
-          item.querySelectorAll('.btn-complete-task, .btn-start-task').forEach(b => b.remove());
+          item.querySelectorAll('.btn-complete-task').forEach(b => b.remove());
         }
 
-        // Enable checkout button if eligible
         const btnOut = document.getElementById('btnCheckOut');
         if (btnOut && data.can_checkout) {
           btnOut.disabled = false;
@@ -314,10 +322,11 @@ function handleTaskComplete(e) {
       } else {
         showToast(data.message, 'danger');
       }
-    }).catch(() => {
+    }).catch(function (err) {
       submitBtn.innerHTML = origLabel;
       submitBtn.disabled = false;
-      showToast('Network error. Please try again.', 'danger');
+      // If the compressor rejected (HEIC etc), it throws an Error with a user-friendly message
+      showToast(err && err.message ? err.message : 'Network error. Please try again.', 'danger');
     });
 }
 
@@ -325,57 +334,125 @@ function handleTaskComplete(e) {
 //  Image Compression (auto-shrink large photos before upload)
 // ============================================================
 // Non-image files pass through untouched.
-// Small images (< 800 KB) pass through untouched.
-// Large images are resized to max 1600px on the long edge
-// and re-encoded as JPEG at ~75% quality.
-// Falls back to the original file on any error.
-function compressImageIfNeeded(file) {
-  return new Promise(function (resolve) {
-    if (!file) { resolve(file); return; }
-    if (!file.type || file.type.indexOf('image/') !== 0) { resolve(file); return; }
-    if (file.size < 800 * 1024) { resolve(file); return; }
+// Small images (< 600 KB) pass through untouched.
+// Large images → iteratively resized/re-encoded until ≤ 900 KB
+// (starting at 1280 px / quality 0.72, halving until fit).
+// HEIC/HEIF files (iPhone default) → rejected with a clear message.
+// Falls back to the original file on any unexpected error.
 
-    var MAX_DIM = 1600;
-    var QUALITY = 0.75;
+// Detect HEIC — browser cannot decode it in a canvas
+function isHeicFile(file) {
+  if (!file) { return false; }
+  var name = (file.name || '').toLowerCase();
+  var type = (file.type || '').toLowerCase();
+  return name.endsWith('.heic') || name.endsWith('.heif')
+      || type === 'image/heic' || type === 'image/heif';
+}
+
+function compressImageIfNeeded(file) {
+  return new Promise(function (resolve, reject) {
+    if (!file) { resolve({ file: file, skipped: true }); return; }
+    if (!file.type || file.type.indexOf('image/') !== 0) {
+      resolve({ file: file, skipped: true }); return;
+    }
+    if (isHeicFile(file)) {
+      reject(new Error(
+        'Your phone saved this photo in HEIC format, which cannot be uploaded. ' +
+        'On iPhone: Settings → Camera → Formats → choose "Most Compatible". ' +
+        'Then retake and try again.'
+      ));
+      return;
+    }
+    if (file.size < 600 * 1024) {
+      resolve({ file: file, skipped: true, origSize: file.size }); return;
+    }
+
+    var TARGET_MAX_BYTES = 900 * 1024;   // aim for ≤ 900 KB
+    var origSize = file.size;
 
     var reader = new FileReader();
+    reader.onerror = function () { resolve({ file: file, error: true }); };
     reader.onload = function (ev) {
       var img = new Image();
+      img.onerror = function () { resolve({ file: file, error: true }); };
       img.onload = function () {
-        var w = img.width, h = img.height;
-        if (w > MAX_DIM || h > MAX_DIM) {
-          if (w >= h) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
-          else        { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
-        }
-        var canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        var ctx = canvas.getContext('2d');
-        if (!ctx) { resolve(file); return; }
-        ctx.drawImage(img, 0, 0, w, h);
+        var baseW = img.width, baseH = img.height;
+
+        // Successive attempts: shrink dimension + lower quality until ≤ target
+        var attempts = [
+          { dim: 1280, q: 0.72 },
+          { dim: 1024, q: 0.65 },
+          { dim: 900,  q: 0.60 },
+          { dim: 800,  q: 0.55 },
+          { dim: 720,  q: 0.50 }
+        ];
 
         var origName = file.name || 'photo.jpg';
         var base     = origName.replace(/\.[^.]+$/, '');
         var newName  = base + '.jpg';
 
-        if (!canvas.toBlob) { resolve(file); return; }
-        canvas.toBlob(function (blob) {
-          if (!blob) { resolve(file); return; }
-          if (blob.size >= file.size) { resolve(file); return; }
-          try {
-            resolve(new File([blob], newName, { type: 'image/jpeg' }));
-          } catch (e) {
-            // Old browsers without File constructor
-            blob.name = newName;
-            resolve(blob);
+        function tryAttempt(i) {
+          if (i >= attempts.length) {
+            // Give up — return the smallest we managed (original if nothing worked)
+            resolve({ file: file, error: true }); return;
           }
-        }, 'image/jpeg', QUALITY);
+          var MAX_DIM = attempts[i].dim;
+          var QUALITY = attempts[i].q;
+
+          var w = baseW, h = baseH;
+          if (w > MAX_DIM || h > MAX_DIM) {
+            if (w >= h) { h = Math.round(h * MAX_DIM / w); w = MAX_DIM; }
+            else        { w = Math.round(w * MAX_DIM / h); h = MAX_DIM; }
+          }
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          var ctx = canvas.getContext('2d');
+          if (!ctx || !canvas.toBlob) { resolve({ file: file, error: true }); return; }
+          // White background (transparent PNGs shouldn't end up black)
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+
+          canvas.toBlob(function (blob) {
+            if (!blob) { resolve({ file: file, error: true }); return; }
+            // Good enough — or this was our last attempt
+            if (blob.size <= TARGET_MAX_BYTES || i === attempts.length - 1) {
+              // Don't upload a bigger file than the original
+              if (blob.size >= origSize) {
+                resolve({ file: file, skipped: true, origSize: origSize });
+                return;
+              }
+              var out;
+              try {
+                out = new File([blob], newName, { type: 'image/jpeg' });
+              } catch (e) {
+                blob.name = newName; out = blob;
+              }
+              resolve({
+                file: out, skipped: false,
+                origSize: origSize, newSize: blob.size
+              });
+              return;
+            }
+            // Still too big — try tighter settings
+            tryAttempt(i + 1);
+          }, 'image/jpeg', QUALITY);
+        }
+
+        tryAttempt(0);
       };
-      img.onerror = function () { resolve(file); };
       img.src = ev.target.result;
     };
-    reader.onerror = function () { resolve(file); };
     reader.readAsDataURL(file);
   });
+}
+
+// Human-readable byte formatter for toasts
+function formatBytes(n) {
+  if (!n && n !== 0) { return '?'; }
+  if (n < 1024) { return n + ' B'; }
+  if (n < 1024 * 1024) { return (n / 1024).toFixed(0) + ' KB'; }
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
 }
 
 // ============================================================
