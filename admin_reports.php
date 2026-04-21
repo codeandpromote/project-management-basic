@@ -115,6 +115,31 @@ function workDuration(?string $in, ?string $out): string {
     return sprintf('%dh %02dm', intdiv($mins, 60), $mins % 60);
 }
 
+// ── CSV Export (must run BEFORE any HTML output) ─────────────
+if (isset($_GET['export']) && $_GET['export'] === 'csv') {
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="attendance_' . date('Ymd') . '.csv"');
+    $out = fopen('php://output', 'w');
+    // UTF-8 BOM so Excel renders accents / unicode correctly
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Date','Employee','Role','Check-In','Check-Out','Hours Worked','Status','Day-End Notes','IP/Location']);
+    foreach ($records as $r) {
+        fputcsv($out, [
+            $r['work_date'],
+            $r['name'],
+            ucfirst(str_replace('_',' ',$r['role'])),
+            $r['check_in_time']  ? date('h:i A', strtotime($r['check_in_time']))  : '',
+            $r['check_out_time'] ? date('h:i A', strtotime($r['check_out_time'])) : '',
+            workDuration($r['check_in_time'], $r['check_out_time']),
+            $r['status'],
+            $r['day_end_notes'] ?? '',
+            $r['lat_long'] ?? $r['ip_address'] ?? '',
+        ]);
+    }
+    fclose($out);
+    exit;
+}
+
 $pageTitle = 'Attendance Reports';
 include __DIR__ . '/includes/header.php';
 ?>
@@ -242,13 +267,14 @@ include __DIR__ . '/includes/header.php';
           <th>Check-Out</th>
           <th>Hours</th>
           <th>Status</th>
+          <th>Day-End Notes</th>
           <th class="pe-3">Location</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($records)): ?>
         <tr>
-          <td colspan="8" class="text-center py-5 text-muted">
+          <td colspan="9" class="text-center py-5 text-muted">
             <i class="bi bi-search fs-1 d-block mb-2 opacity-25"></i>
             No attendance records found for the selected filters.
           </td>
@@ -269,6 +295,20 @@ include __DIR__ . '/includes/header.php';
           </td>
           <td class="small"><?= workDuration($r['check_in_time'], $r['check_out_time']) ?></td>
           <td><?= attBadge($r['status']) ?></td>
+          <td class="small" style="max-width:260px">
+            <?php if (!empty($r['day_end_notes'])): ?>
+            <details>
+              <summary class="text-primary" style="cursor:pointer;font-size:.78rem">
+                <i class="bi bi-chat-text me-1"></i>View Notes
+              </summary>
+              <div class="mt-1 p-2 bg-light rounded text-dark" style="white-space:pre-wrap;font-size:.78rem">
+                <?= h($r['day_end_notes']) ?>
+              </div>
+            </details>
+            <?php else: ?>
+            <span class="text-muted">—</span>
+            <?php endif; ?>
+          </td>
           <td class="pe-3 small text-muted">
             <?php if ($r['lat_long']): ?>
             <a href="https://maps.google.com/?q=<?= h($r['lat_long']) ?>"
@@ -286,28 +326,4 @@ include __DIR__ . '/includes/header.php';
   </div>
 </div>
 
-<?php
-// ── CSV Export ────────────────────────────────────────────────
-if (isset($_GET['export']) && $_GET['export'] === 'csv') {
-    header('Content-Type: text/csv');
-    header('Content-Disposition: attachment; filename="attendance_' . date('Ymd') . '.csv"');
-    $out = fopen('php://output', 'w');
-    fputcsv($out, ['Date','Employee','Role','Check-In','Check-Out','Hours Worked','Status','IP/Location']);
-    foreach ($records as $r) {
-        fputcsv($out, [
-            $r['work_date'],
-            $r['name'],
-            ucfirst(str_replace('_',' ',$r['role'])),
-            $r['check_in_time']  ? date('h:i A', strtotime($r['check_in_time']))  : '',
-            $r['check_out_time'] ? date('h:i A', strtotime($r['check_out_time'])) : '',
-            workDuration($r['check_in_time'], $r['check_out_time']),
-            $r['status'],
-            $r['lat_long'] ?? $r['ip_address'] ?? '',
-        ]);
-    }
-    fclose($out);
-    exit;
-}
-
-include __DIR__ . '/includes/footer.php';
-?>
+<?php include __DIR__ . '/includes/footer.php'; ?>

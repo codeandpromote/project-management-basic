@@ -104,6 +104,18 @@ try {
         $notes ?: null, $loggedAt,
     ]);
 
+    // If the worker tagged this log to a pending task, auto-move it to 'in_progress'.
+    // Only pending tasks are promoted — already in_progress / completed tasks are left alone.
+    $taskPromoted = false;
+    if ($taskId) {
+        $stUp = $db->prepare(
+            "UPDATE tasks SET status = 'in_progress', updated_at = ?
+              WHERE id = ? AND user_id = ? AND status = 'pending'"
+        );
+        $stUp->execute([$loggedAt, $taskId, $user['id']]);
+        $taskPromoted = $stUp->rowCount() > 0;
+    }
+
     // Build Google Maps link
     $mapsUrl = "https://maps.google.com/?q={$lat},{$lng}";
 
@@ -114,16 +126,21 @@ try {
     $stCount->execute([$user['id'], $logDate]);
     $todayCount = (int)$stCount->fetchColumn();
 
+    $baseMsg = $noGps ? 'Activity logged (no GPS).' : 'Location logged successfully.';
+    if ($taskPromoted) { $baseMsg .= ' Task moved to In Progress.'; }
+
     exit(json_encode([
-        'success'     => true,
-        'message'     => $noGps ? 'Activity logged (no GPS).' : 'Location logged successfully.',
-        'time'        => date('h:i A', strtotime($loggedAt)),
-        'lat'         => $lat,
-        'lng'         => $lng,
-        'accuracy'    => $accuracy,
-        'no_gps'      => $noGps,
-        'maps_url'    => $noGps ? '' : $mapsUrl,
-        'today_count' => $todayCount,
+        'success'       => true,
+        'message'       => $baseMsg,
+        'time'          => date('h:i A', strtotime($loggedAt)),
+        'lat'           => $lat,
+        'lng'           => $lng,
+        'accuracy'      => $accuracy,
+        'no_gps'        => $noGps,
+        'maps_url'      => $noGps ? '' : $mapsUrl,
+        'today_count'   => $todayCount,
+        'task_promoted' => $taskPromoted,
+        'task_id'       => $taskId,
     ]));
 } catch (PDOException $e) {
     http_response_code(500);
