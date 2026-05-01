@@ -57,17 +57,39 @@ switch ($action) {
             exit(json_encode(['success' => false, 'message' => 'Completion notes are required.']));
         }
 
-        // Proof file upload
+        // Proof file upload (mandatory)
         $upload = handleFileUpload('proof_file', 'proofs');
         if (!$upload['success']) {
             exit(json_encode(['success' => false, 'message' => $upload['message']]));
         }
 
+        // Call recording upload (optional)
+        $recordingPath = null;
+        if (!empty($_FILES['call_recording']['name'])) {
+            $recUp = handleFileUpload('call_recording', 'recordings');
+            if (!$recUp['success']) {
+                exit(json_encode([
+                    'success' => false,
+                    'message' => 'Call recording: ' . $recUp['message'],
+                ]));
+            }
+            $recordingPath = $recUp['path'];
+        }
+
         $now = date('Y-m-d H:i:s');
-        $db->prepare(
-            "UPDATE tasks SET status='completed', completion_notes=?,
-             proof_file=?, completed_at=?, updated_at=? WHERE id=?"
-        )->execute([$notes, $upload['path'], $now, $now, $taskId]);
+        try {
+            $db->prepare(
+                "UPDATE tasks SET status='completed', completion_notes=?,
+                 proof_file=?, call_recording=?, completed_at=?, updated_at=?
+                 WHERE id=?"
+            )->execute([$notes, $upload['path'], $recordingPath, $now, $now, $taskId]);
+        } catch (PDOException $e) {
+            // call_recording column missing on older installs — fall back
+            $db->prepare(
+                "UPDATE tasks SET status='completed', completion_notes=?,
+                 proof_file=?, completed_at=?, updated_at=? WHERE id=?"
+            )->execute([$notes, $upload['path'], $now, $now, $taskId]);
+        }
 
         // Re-count pending daily tasks using the same logic as fetchTasks() on the dashboard:
         // any daily task that is pending/in_progress or overdue (not completed).

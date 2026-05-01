@@ -10,15 +10,22 @@ if (!empty($_SESSION['user_id'])) {
     redirect('dashboard.php');
 }
 
-$error = '';
+$error  = '';
+$notice = '';
+
+// Surface session-related redirects from requireLogin()
+if (($_GET['reason'] ?? '') === 'session_replaced') {
+    $notice = 'You have been signed out because this account signed in on another device.';
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!verifyCSRF($_POST['csrf_token'] ?? '')) {
         $error = 'Security token mismatch. Please refresh and try again.';
     } else {
         $result = attemptLogin(
-            $_POST['email']    ?? '',
-            $_POST['password'] ?? ''
+            $_POST['email']     ?? '',
+            $_POST['password']  ?? '',
+            $_POST['device_id'] ?? ''
         );
         if ($result['success']) {
             redirect('dashboard.php');
@@ -53,6 +60,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <p class="text-muted small mb-0">Workforce Management Platform</p>
       </div>
 
+      <!-- Notice alert (session replaced, etc.) -->
+      <?php if ($notice): ?>
+      <div class="alert alert-warning alert-dismissible d-flex align-items-start gap-2 py-2 mb-3" role="alert">
+        <i class="bi bi-info-circle-fill flex-shrink-0 mt-1"></i>
+        <div class="small"><?= h($notice) ?></div>
+        <button type="button" class="btn-close btn-close-sm ms-auto" data-bs-dismiss="alert"></button>
+      </div>
+      <?php endif; ?>
+
       <!-- Error alert -->
       <?php if ($error): ?>
       <div class="alert alert-danger alert-dismissible d-flex align-items-start gap-2 py-2 mb-3" role="alert">
@@ -63,8 +79,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <?php endif; ?>
 
       <!-- Login form -->
-      <form method="POST" action="index.php" autocomplete="on" novalidate>
+      <form method="POST" action="index.php" autocomplete="on" novalidate id="loginForm">
         <?= csrfField() ?>
+        <input type="hidden" name="device_id" id="deviceIdInput">
 
         <div class="mb-3">
           <label for="email" class="form-label fw-semibold small">Email address</label>
@@ -118,6 +135,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     pwdInput.type = isText ? 'password' : 'text';
     eyeIcon.className = isText ? 'bi bi-eye' : 'bi bi-eye-slash';
   });
+
+  // ── Device fingerprint ──────────────────────────────────────
+  // Persist a per-browser/per-device UUID in localStorage. For field
+  // workers this becomes the bound device ID; admin can reset it.
+  (function () {
+    const KEY = 'hrms_device_id';
+    function uuid() {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+      });
+    }
+    let did = '';
+    try { did = localStorage.getItem(KEY) || ''; } catch (e) {}
+    if (!did) {
+      did = uuid();
+      try { localStorage.setItem(KEY, did); } catch (e) {}
+    }
+    document.getElementById('deviceIdInput').value = did;
+    // Refresh on submit in case storage just became available.
+    document.getElementById('loginForm').addEventListener('submit', function () {
+      try {
+        let v = localStorage.getItem(KEY);
+        if (!v) { v = uuid(); localStorage.setItem(KEY, v); }
+        document.getElementById('deviceIdInput').value = v;
+      } catch (e) {
+        if (!document.getElementById('deviceIdInput').value) {
+          document.getElementById('deviceIdInput').value = uuid();
+        }
+      }
+    });
+  })();
 </script>
 </body>
 </html>

@@ -494,6 +494,16 @@ include __DIR__ . '/includes/header.php';
               <?php if (!empty($log['notes'])): ?>
               <div class="small text-muted fst-italic mt-1">"<?= h($log['notes']) ?>"</div>
               <?php endif; ?>
+              <?php if (!empty($log['photo'])): ?>
+              <div class="mt-2">
+                <a href="download.php?path=<?= urlencode($log['photo']) ?>" target="_blank"
+                   class="d-inline-block">
+                  <img src="download.php?path=<?= urlencode($log['photo']) ?>"
+                       alt="Visit photo" class="rounded border"
+                       style="width:84px;height:84px;object-fit:cover">
+                </a>
+              </div>
+              <?php endif; ?>
             </div>
             <?php if ($hasGps): ?>
             <a href="https://maps.google.com/?q=<?= (float)$log['lat'] ?>,<?= (float)$log['lng'] ?>"

@@ -64,6 +64,47 @@ function requireLogin(): void
         header('Location: index.php');
         exit;
     }
+
+    // Single-device session enforcement: the session_token stored in the
+    // browser session must still match the one in users.session_token. If it
+    // doesn't, another device has signed in and rotated the token — kick
+    // this session out.
+    if (!empty($_SESSION['session_token'])) {
+        try {
+            $st = getDB()->prepare('SELECT session_token FROM users WHERE id = ? LIMIT 1');
+            $st->execute([$_SESSION['user_id']]);
+            $dbToken = (string)($st->fetchColumn() ?: '');
+        } catch (PDOException $e) {
+            $dbToken = '';
+        }
+        if ($dbToken === '' || !hash_equals($dbToken, (string)$_SESSION['session_token'])) {
+            logSystemEvent(
+                'session_replaced',
+                (int)$_SESSION['user_id'],
+                'Forced sign-out: another device signed in on this account',
+                $_SESSION['device_id'] ?? null
+            );
+            $_SESSION = [];
+            if (ini_get('session.use_cookies')) {
+                $p = session_get_cookie_params();
+                setcookie(session_name(), '', time() - 42000,
+                    $p['path'], $p['domain'], $p['secure'], $p['httponly']);
+            }
+            session_destroy();
+            $isAjax = !empty($_SERVER['HTTP_X_REQUESTED_WITH'])
+                   || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'));
+            if ($isAjax) {
+                http_response_code(401);
+                header('Content-Type: application/json');
+                exit(json_encode([
+                    'success' => false,
+                    'message' => 'Session ended: this account signed in on another device.'
+                ]));
+            }
+            header('Location: index.php?reason=session_replaced');
+            exit;
+        }
+    }
 }
 
 function requireRole(string ...$roles): void
@@ -91,28 +132,93 @@ function getCurrentUser(): ?array
 }
 
 // ── Login ─────────────────────────────────────────────────────
-function attemptLogin(string $email, string $password): array
+function attemptLogin(string $email, string $password, string $deviceFingerprint = ''): array
 {
     if (empty($email) || empty($password)) {
         return ['success' => false, 'message' => 'Email and password are required.'];
     }
 
+    // Sanitise device fingerprint (alphanumeric/dash only, max 64 chars)
+    $deviceFingerprint = substr(preg_replace('/[^A-Za-z0-9\-]/', '', $deviceFingerprint), 0, 64);
+
     $st = getDB()->prepare(
-        'SELECT id, name, email, password, role
+        'SELECT id, name, email, password, role, device_id
          FROM users WHERE email = ? AND is_active = 1 LIMIT 1'
     );
     $st->execute([strtolower(trim($email))]);
     $user = $st->fetch();
 
     if (!$user || !password_verify($password, $user['password'])) {
+        logSystemEvent(
+            'login_failed',
+            $user['id'] ?? null,
+            'Invalid credentials for ' . substr($email, 0, 120),
+            $deviceFingerprint ?: null
+        );
         return ['success' => false, 'message' => 'Invalid email or password.'];
     }
 
+    if ($deviceFingerprint === '') {
+        logSystemEvent(
+            'device_missing',
+            (int)$user['id'],
+            'Login blocked: no device fingerprint submitted'
+        );
+        return [
+            'success' => false,
+            'message' => 'Device verification failed. Please enable JavaScript / cookies and try again.'
+        ];
+    }
+
+    $db  = getDB();
+    $uid = (int)$user['id'];
+
+    // ── Field worker: bind to first device, reject any other ──
+    if ($user['role'] === 'field_worker') {
+        $boundId = (string)($user['device_id'] ?? '');
+        if ($boundId === '') {
+            // First-ever login on this account → bind this device.
+            $db->prepare('UPDATE users SET device_id = ?, device_bound_at = NOW() WHERE id = ?')
+               ->execute([$deviceFingerprint, $uid]);
+            logSystemEvent('device_bound', $uid, 'Device bound on first login', $deviceFingerprint);
+        } elseif (!hash_equals($boundId, $deviceFingerprint)) {
+            logSystemEvent(
+                'device_rejected',
+                $uid,
+                'Login denied — fingerprint mismatch (bound=' . substr($boundId, 0, 8) . '…)',
+                $deviceFingerprint
+            );
+            return [
+                'success' => false,
+                'message' => 'Login denied: this account is locked to a registered device. '
+                           . 'Please contact your administrator to reset your device.'
+            ];
+        }
+    }
+
+    // ── Single-active-session lock (all roles) ────────────────
+    // Rotating the token here invalidates any other browser/device that
+    // was previously signed in on this account — requireLogin() will see
+    // the stale token next request and force-logout that session.
+    $token = bin2hex(random_bytes(32));
+    $ip    = getClientIp();
+    $ua    = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+    $db->prepare(
+        'UPDATE users
+            SET session_token = ?, last_login_at = NOW(),
+                last_login_ip = ?, last_user_agent = ?
+          WHERE id = ?'
+    )->execute([$token, $ip, $ua, $uid]);
+
     startSession();
     session_regenerate_id(true);
-    $_SESSION['user_id']   = $user['id'];
-    $_SESSION['user_name'] = $user['name'];
-    $_SESSION['user_role'] = $user['role'];
+    $_SESSION['user_id']       = $user['id'];
+    $_SESSION['user_name']     = $user['name'];
+    $_SESSION['user_role']     = $user['role'];
+    $_SESSION['session_token'] = $token;
+    $_SESSION['device_id']     = $deviceFingerprint;
+
+    logSystemEvent('login_success', $uid, 'Signed in as ' . $user['role'], $deviceFingerprint);
 
     return ['success' => true, 'role' => $user['role']];
 }
@@ -121,6 +227,15 @@ function attemptLogin(string $email, string $password): array
 function logout(): void
 {
     startSession();
+    // Clear the active session_token in DB so the slot is free for the
+    // next login from any device.
+    if (!empty($_SESSION['user_id'])) {
+        try {
+            getDB()->prepare('UPDATE users SET session_token = NULL WHERE id = ?')
+                   ->execute([$_SESSION['user_id']]);
+        } catch (PDOException $ignored) { /* best-effort */ }
+        logSystemEvent('logout', (int)$_SESSION['user_id'], 'User signed out', $_SESSION['device_id'] ?? null);
+    }
     $_SESSION = [];
     if (ini_get('session.use_cookies')) {
         $p = session_get_cookie_params();
@@ -224,6 +339,33 @@ function getClientIp(): string
 function h(string $str): string
 {
     return htmlspecialchars($str, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+// ── System event log (admin monitoring) ──────────────────────
+// Best-effort write to system_log; never throws — auth flows must
+// not fail because logging failed.
+function logSystemEvent(
+    string $eventType,
+    ?int   $userId   = null,
+    string $details  = '',
+    ?string $deviceId = null,
+    ?int   $actorId  = null
+): void {
+    try {
+        $ip = getClientIp();
+        $ua = substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255);
+        getDB()->prepare(
+            'INSERT INTO system_log
+             (user_id, actor_id, event_type, details, ip_address, device_id, user_agent)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $userId, $actorId, $eventType,
+            substr($details, 0, 500),
+            $ip,
+            $deviceId !== null ? substr($deviceId, 0, 64) : null,
+            $ua,
+        ]);
+    } catch (Throwable $ignored) { /* never block on log failure */ }
 }
 
 // ── Secure file upload helper ─────────────────────────────────

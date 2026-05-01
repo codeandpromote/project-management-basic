@@ -163,6 +163,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        // ── RESET DEVICE ──────────────────────────────────────
+        // Clears the bound device fingerprint AND the active session
+        // token. Field workers can then log in from a new device, and
+        // any active session on any role is force-logged-out.
+        if ($formAction === 'reset_device') {
+            $resetId = (int)($_POST['reset_id'] ?? 0);
+            if ($resetId) {
+                $stN = $db->prepare('SELECT name FROM users WHERE id = ?');
+                $stN->execute([$resetId]);
+                $rName = $stN->fetchColumn() ?: 'user';
+                $db->prepare(
+                    'UPDATE users
+                        SET device_id = NULL,
+                            device_bound_at = NULL,
+                            session_token = NULL
+                      WHERE id = ?'
+                )->execute([$resetId]);
+                logSystemEvent(
+                    'device_reset',
+                    $resetId,
+                    "Admin reset device & session for {$rName}",
+                    null,
+                    (int)$user['id']
+                );
+                $success = "Device & active session reset for '{$rName}'. They can now sign in from a new device.";
+            }
+        }
+
         // ── DELETE USER ───────────────────────────────────────
         if ($formAction === 'delete_user') {
             $delId = (int)($_POST['del_id'] ?? 0);
@@ -401,6 +429,26 @@ $docsComplete = count(array_filter($allUsers, fn($u) => $u['id_front'] && $u['id
                 <i class="bi bi-pencil-fill"></i>
               </button>
               <?php if ((int)$u['id'] !== (int)$user['id']): ?>
+              <?php
+                $hasDevice  = !empty($u['device_id'] ?? null);
+                $hasSession = !empty($u['session_token'] ?? null);
+                $resetTitle = $u['role'] === 'field_worker'
+                    ? ($hasDevice ? 'Reset bound device' : 'No device bound — clear active session')
+                    : ($hasSession ? 'Force sign-out (clear active session)' : 'No active session');
+                $resetEnabled = $hasDevice || $hasSession;
+              ?>
+              <form method="POST" class="d-inline">
+                <?= csrfField() ?>
+                <input type="hidden" name="form_action" value="reset_device">
+                <input type="hidden" name="reset_id"    value="<?= $u['id'] ?>">
+                <button type="submit"
+                        class="btn btn-xs <?= $resetEnabled ? 'btn-outline-info' : 'btn-outline-secondary' ?>"
+                        title="<?= h($resetTitle) ?>"
+                        <?= $resetEnabled ? '' : 'disabled' ?>
+                        onclick="return confirm('Reset device & active session for \'<?= h($u['name']) ?>\'? They will be signed out and (if a field worker) can register a new device on next login.')">
+                  <i class="bi bi-phone-vibrate-fill"></i>
+                </button>
+              </form>
               <form method="POST" class="d-inline">
                 <?= csrfField() ?>
                 <input type="hidden" name="form_action" value="toggle_active">

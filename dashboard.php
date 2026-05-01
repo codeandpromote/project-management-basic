@@ -113,6 +113,40 @@ $stLeaves = $db->prepare(
 $stLeaves->execute([$uid]);
 $myLeaves = $stLeaves->fetchAll();
 
+// ── Lead follow-ups (today + overdue) for this user ────────────
+// Auto-reappear feature: any lead with next_followup_date <= today
+// and the user is the assignee or creator shows up here.
+$myFollowupsToday = [];
+$myFollowupsOverdue = [];
+try {
+    $stFu = $db->prepare(
+        "SELECT l.id, l.name, l.phone, l.company, l.priority, l.status, l.next_followup_date
+           FROM leads l
+          WHERE l.is_deleted = 0
+            AND l.status NOT IN ('won','lost')
+            AND (l.assigned_to = ? OR l.creator_id = ?)
+            AND l.next_followup_date = ?
+          ORDER BY FIELD(l.priority,'hot','high','medium','low')"
+    );
+    $stFu->execute([$uid, $uid, $today]);
+    $myFollowupsToday = $stFu->fetchAll();
+
+    $stOv = $db->prepare(
+        "SELECT l.id, l.name, l.phone, l.company, l.priority, l.status, l.next_followup_date
+           FROM leads l
+          WHERE l.is_deleted = 0
+            AND l.status NOT IN ('won','lost')
+            AND (l.assigned_to = ? OR l.creator_id = ?)
+            AND l.next_followup_date < ?
+          ORDER BY l.next_followup_date ASC, FIELD(l.priority,'hot','high','medium','low')
+          LIMIT 20"
+    );
+    $stOv->execute([$uid, $uid, $today]);
+    $myFollowupsOverdue = $stOv->fetchAll();
+} catch (PDOException $e) {
+    // leads table may not be ready on first load — silent fallback
+}
+
 // ── Admin stats ───────────────────────────────────────────────
 $stats = [];
 if ($role === 'admin') {
@@ -133,6 +167,92 @@ if ($role === 'admin') {
     $stats['open_tasks'] = (int)$db->query(
         "SELECT COUNT(*) FROM tasks WHERE status IN ('pending','in_progress')"
     )->fetchColumn();
+
+    $stats['in_process_tasks'] = (int)$db->query(
+        "SELECT COUNT(*) FROM tasks WHERE status = 'in_progress'"
+    )->fetchColumn();
+
+    // ── Chart data (admin only) ────────────────────────────────
+    $chartData = [
+        'taskStatus'    => ['pending' => 0, 'in_progress' => 0, 'completed' => 0, 'overdue' => 0],
+        'topEmployees'  => ['labels' => [], 'values' => []],
+        'attendance'    => ['labels' => [], 'values' => []],
+        'leadStatus'    => ['labels' => [], 'values' => []],
+    ];
+
+    // Task status distribution (treat not-completed + past-deadline as overdue)
+    try {
+        $taskRows = $db->query(
+            "SELECT status,
+                    SUM(CASE WHEN status != 'completed' AND deadline IS NOT NULL AND deadline < NOW()
+                             THEN 1 ELSE 0 END) AS overdue_cnt,
+                    COUNT(*) AS cnt
+               FROM tasks
+              GROUP BY status"
+        )->fetchAll();
+        $overdueTotal = 0;
+        foreach ($taskRows as $r) {
+            $st  = $r['status'];
+            $cnt = (int)$r['cnt'];
+            $od  = (int)$r['overdue_cnt'];
+            if ($st === 'completed') {
+                $chartData['taskStatus']['completed'] += $cnt;
+            } else {
+                $chartData['taskStatus'][$st] = ($chartData['taskStatus'][$st] ?? 0) + ($cnt - $od);
+                $overdueTotal += $od;
+            }
+        }
+        $chartData['taskStatus']['overdue'] = $overdueTotal;
+    } catch (PDOException $ignored) {}
+
+    // Top 5 employees by total tasks assigned
+    try {
+        $topRows = $db->query(
+            "SELECT u.name, COUNT(t.id) AS cnt
+               FROM users u
+          LEFT JOIN tasks t ON t.user_id = u.id
+              WHERE u.role != 'admin' AND u.is_active = 1
+           GROUP BY u.id, u.name
+           ORDER BY cnt DESC
+              LIMIT 5"
+        )->fetchAll();
+        foreach ($topRows as $r) {
+            $chartData['topEmployees']['labels'][] = $r['name'];
+            $chartData['topEmployees']['values'][] = (int)$r['cnt'];
+        }
+    } catch (PDOException $ignored) {}
+
+    // Attendance over last 14 days (present count per day)
+    try {
+        $stAttLine = $db->prepare(
+            "SELECT work_date, COUNT(*) AS cnt
+               FROM attendance
+              WHERE status = 'present' AND work_date >= ?
+           GROUP BY work_date
+           ORDER BY work_date ASC"
+        );
+        $stAttLine->execute([date('Y-m-d', strtotime('-13 days'))]);
+        $attMap = [];
+        foreach ($stAttLine->fetchAll() as $r) {
+            $attMap[$r['work_date']] = (int)$r['cnt'];
+        }
+        for ($i = 13; $i >= 0; $i--) {
+            $d = date('Y-m-d', strtotime("-{$i} days"));
+            $chartData['attendance']['labels'][] = date('d M', strtotime($d));
+            $chartData['attendance']['values'][] = $attMap[$d] ?? 0;
+        }
+    } catch (PDOException $ignored) {}
+
+    // Leads by status
+    try {
+        $leadRows = $db->query(
+            "SELECT status, COUNT(*) AS cnt FROM leads GROUP BY status ORDER BY cnt DESC"
+        )->fetchAll();
+        foreach ($leadRows as $r) {
+            $chartData['leadStatus']['labels'][] = ucfirst(str_replace('_', ' ', $r['status']));
+            $chartData['leadStatus']['values'][] = (int)$r['cnt'];
+        }
+    } catch (PDOException $ignored) {}
 }
 
 // ── Check-out eligibility ─────────────────────────────────────
@@ -228,7 +348,155 @@ include __DIR__ . '/includes/header.php';
       </div>
     </div>
   </div>
+  <div class="col-6 col-xl-3">
+    <a href="tasks.php?status=in_progress" class="text-decoration-none text-reset">
+      <div class="card stat-card border-0 shadow-sm h-100">
+        <div class="card-body d-flex align-items-center gap-3">
+          <div class="stat-icon bg-info-subtle text-info">
+            <i class="bi bi-hourglass-split"></i>
+          </div>
+          <div>
+            <div class="stat-value"><?= $stats['in_process_tasks'] ?></div>
+            <div class="stat-label">In Process Jobs</div>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
 </div>
+
+<!-- ── Admin Charts Row ─────────────────────────────────────── -->
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-bottom fw-semibold d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-pie-chart-fill text-primary"></i>
+        <span class="small">Task Status</span>
+      </div>
+      <div class="card-body d-flex align-items-center justify-content-center" style="min-height:240px">
+        <canvas id="chartTaskStatus"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-bottom fw-semibold d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-bar-chart-fill text-success"></i>
+        <span class="small">Top 5 Employees · Tasks Assigned</span>
+      </div>
+      <div class="card-body d-flex align-items-center justify-content-center" style="min-height:240px">
+        <canvas id="chartTopEmployees"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-bottom fw-semibold d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-graph-up text-info"></i>
+        <span class="small">Attendance · Last 14 Days</span>
+      </div>
+      <div class="card-body d-flex align-items-center justify-content-center" style="min-height:240px">
+        <canvas id="chartAttendance"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6 col-xl-3">
+    <div class="card border-0 shadow-sm h-100">
+      <div class="card-header bg-transparent border-bottom fw-semibold d-flex align-items-center gap-2 py-2">
+        <i class="bi bi-funnel-fill text-warning"></i>
+        <span class="small">Leads by Status</span>
+      </div>
+      <div class="card-body d-flex align-items-center justify-content-center" style="min-height:240px">
+        <canvas id="chartLeadStatus"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+  if (typeof Chart === 'undefined') { return; }
+  var CD = <?= json_encode($chartData, JSON_UNESCAPED_UNICODE) ?>;
+
+  // Pie · Task status
+  var ts = CD.taskStatus;
+  new Chart(document.getElementById('chartTaskStatus'), {
+    type: 'pie',
+    data: {
+      labels: ['Pending', 'In Progress', 'Completed', 'Overdue'],
+      datasets: [{
+        data: [ts.pending, ts.in_progress, ts.completed, ts.overdue],
+        backgroundColor: ['#ffc107', '#0dcaf0', '#198754', '#dc3545'],
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } }
+    }
+  });
+
+  // Bar · Top employees
+  new Chart(document.getElementById('chartTopEmployees'), {
+    type: 'bar',
+    data: {
+      labels: CD.topEmployees.labels,
+      datasets: [{
+        label: 'Tasks',
+        data: CD.topEmployees.values,
+        backgroundColor: '#198754',
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+
+  // Line · Attendance
+  new Chart(document.getElementById('chartAttendance'), {
+    type: 'line',
+    data: {
+      labels: CD.attendance.labels,
+      datasets: [{
+        label: 'Present',
+        data: CD.attendance.values,
+        borderColor: '#0dcaf0',
+        backgroundColor: 'rgba(13,202,240,0.15)',
+        fill: true, tension: 0.3, pointRadius: 3
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+
+  // Doughnut · Leads
+  new Chart(document.getElementById('chartLeadStatus'), {
+    type: 'doughnut',
+    data: {
+      labels: CD.leadStatus.labels,
+      datasets: [{
+        data: CD.leadStatus.values,
+        backgroundColor: ['#0d6efd','#0dcaf0','#6610f2','#ffc107','#fd7e14','#198754','#dc3545','#6c757d'],
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } }
+    }
+  });
+})();
+</script>
 <?php endif; ?>
 
 <div class="row g-4">
@@ -367,6 +635,67 @@ include __DIR__ . '/includes/header.php';
         <?php endif; ?>
       </div>
     </div>
+
+    <!-- ── Lead Follow-ups (all roles) ─────────────────────────── -->
+    <?php if (!empty($myFollowupsOverdue) || !empty($myFollowupsToday)): ?>
+    <div class="card border-0 shadow-sm mt-4">
+      <div class="card-header bg-transparent border-bottom fw-semibold d-flex align-items-center gap-2">
+        <i class="bi bi-alarm-fill text-warning"></i>Lead Follow-ups
+        <?php if (!empty($myFollowupsToday)): ?>
+        <span class="badge bg-primary ms-1"><?= count($myFollowupsToday) ?> today</span>
+        <?php endif; ?>
+        <?php if (!empty($myFollowupsOverdue)): ?>
+        <span class="badge bg-danger ms-1"><?= count($myFollowupsOverdue) ?> overdue</span>
+        <?php endif; ?>
+        <a href="leads.php" class="btn btn-sm btn-outline-primary ms-auto">
+          <i class="bi bi-arrow-right"></i>
+        </a>
+      </div>
+      <div class="card-body">
+        <?php if (!empty($myFollowupsOverdue)): ?>
+        <h6 class="small fw-bold text-danger mb-2">
+          <i class="bi bi-exclamation-triangle-fill me-1"></i>Overdue
+        </h6>
+        <?php foreach ($myFollowupsOverdue as $fu): ?>
+        <a href="lead_view.php?id=<?= (int)$fu['id'] ?>"
+           class="d-flex align-items-center gap-2 p-2 border rounded mb-1 text-decoration-none text-dark">
+          <span class="badge bg-<?= $fu['priority'] === 'hot' ? 'danger' : ($fu['priority'] === 'high' ? 'warning' : 'secondary') ?>"><?= h($fu['priority']) ?></span>
+          <div class="flex-grow-1">
+            <div class="fw-semibold small"><?= h($fu['name']) ?></div>
+            <div class="text-muted small">
+              <i class="bi bi-telephone me-1"></i><?= h($fu['phone']) ?>
+              <?php if ($fu['company']): ?> &middot; <?= h($fu['company']) ?><?php endif; ?>
+            </div>
+          </div>
+          <div class="text-danger small fw-bold">
+            <?= h(date('d M', strtotime($fu['next_followup_date']))) ?>
+          </div>
+        </a>
+        <?php endforeach; ?>
+        <?php endif; ?>
+
+        <?php if (!empty($myFollowupsToday)): ?>
+        <h6 class="small fw-bold text-primary mt-3 mb-2">
+          <i class="bi bi-calendar-event me-1"></i>Today
+        </h6>
+        <?php foreach ($myFollowupsToday as $fu): ?>
+        <a href="lead_view.php?id=<?= (int)$fu['id'] ?>"
+           class="d-flex align-items-center gap-2 p-2 border rounded mb-1 text-decoration-none text-dark">
+          <span class="badge bg-<?= $fu['priority'] === 'hot' ? 'danger' : ($fu['priority'] === 'high' ? 'warning' : 'secondary') ?>"><?= h($fu['priority']) ?></span>
+          <div class="flex-grow-1">
+            <div class="fw-semibold small"><?= h($fu['name']) ?></div>
+            <div class="text-muted small">
+              <i class="bi bi-telephone me-1"></i><?= h($fu['phone']) ?>
+              <?php if ($fu['company']): ?> &middot; <?= h($fu['company']) ?><?php endif; ?>
+            </div>
+          </div>
+          <span class="badge bg-primary">Today</span>
+        </a>
+        <?php endforeach; ?>
+        <?php endif; ?>
+      </div>
+    </div>
+    <?php endif; ?>
 
     <!-- ── Location Tracker (field workers only) ──────────────── -->
     <?php if ($role === 'field_worker'): ?>
@@ -577,6 +906,15 @@ include __DIR__ . '/includes/header.php';
             <i class="bi bi-download me-1"></i>Download Proof
           </a>
         </div>
+        <div class="mt-3" id="tdRecordingBlock" style="display:none">
+          <div class="text-muted fw-semibold small mb-1">
+            <i class="bi bi-mic-fill me-1 text-primary"></i>Call Recording
+          </div>
+          <audio id="tdRecordingAudio" controls preload="none" class="w-100 mb-2"></audio>
+          <a id="tdRecordingLink" href="#" target="_blank" class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-download me-1"></i>Download Recording
+          </a>
+        </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
@@ -653,7 +991,7 @@ include __DIR__ . '/includes/header.php';
             <textarea class="form-control" name="completion_notes" rows="3"
                       placeholder="Describe what was done..." required></textarea>
           </div>
-          <div class="mb-0">
+          <div class="mb-3">
             <label class="form-label fw-semibold small">Proof File <span class="text-danger">*</span></label>
             <input type="file" class="form-control" name="proof_file"
                    accept="image/jpeg,image/png,.pdf,.doc,.docx,.zip"
@@ -661,6 +999,17 @@ include __DIR__ . '/includes/header.php';
             <div class="form-text">
               Max <?= MAX_FILE_MB ?> MB. Large photos are auto-compressed before upload.
               <br><small class="text-muted">iPhone users: set Camera &rarr; Formats &rarr; Most Compatible.</small>
+            </div>
+          </div>
+          <div class="mb-0">
+            <label class="form-label fw-semibold small">
+              <i class="bi bi-mic-fill me-1 text-primary"></i>Call Recording
+              <span class="text-muted fw-normal">(Optional)</span>
+            </label>
+            <input type="file" class="form-control" name="call_recording"
+                   accept="audio/*,.mp3,.m4a,.wav,.ogg,.amr,.aac,.webm">
+            <div class="form-text">
+              Attach the call recording with the client (optional). Max <?= MAX_FILE_MB ?> MB.
             </div>
           </div>
         </div>
@@ -752,6 +1101,20 @@ document.addEventListener('DOMContentLoaded', function () {
         pb.style.display = 'none';
       }
 
+      // Call recording (optional audio proof)
+      var rb = document.getElementById('tdRecordingBlock');
+      if (rb) {
+        if (t.call_recording) {
+          var audio = document.getElementById('tdRecordingAudio');
+          var link  = document.getElementById('tdRecordingLink');
+          if (audio) { audio.src = 'download.php?path=' + encodeURIComponent(t.call_recording); audio.load(); }
+          if (link)  { link.href  = 'download.php?path=' + encodeURIComponent(t.call_recording); }
+          rb.style.display = '';
+        } else {
+          rb.style.display = 'none';
+        }
+      }
+
       bsModal.show();
     });
   });
@@ -797,15 +1160,22 @@ function renderTaskList(array $tasks, string $emptyMsg): void
             'creator_name'     => $t['creator_name'],
             'file_path'        => $t['file_path'] ?? '',
             'proof_file'       => $t['proof_file'] ?? '',
+            'call_recording'   => $t['call_recording'] ?? '',
             'completion_notes' => $t['completion_notes'] ?? '',
             'completed_at'     => $t['completed_at'] ? date('d M Y, h:i A', strtotime($t['completed_at'])) : '',
         ], JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8');
 
-        echo '<div class="task-item ' . ($isOverdue ? 'task-overdue' : '') . '"
+        $leadId = isset($t['lead_id']) ? (int)$t['lead_id'] : 0;
+        echo '<div class="task-item ' . ($isOverdue ? 'task-overdue' : '')
+           . ($leadId ? ' task-lead-linked' : '') . '"
                    data-task-id="' . (int)$t['id'] . '">';
         echo '  <div class="task-item-body">';
         echo '    <button class="task-title btn-task-detail text-start p-0 border-0 bg-transparent w-100"
-                          data-task=\'' . $taskData . '\'>' . h($t['title']) . '</button>';
+                          data-task=\'' . $taskData . '\'>';
+        if ($leadId) {
+            echo '<i class="bi bi-link-45deg text-primary me-1" title="Linked to a lead"></i>';
+        }
+        echo h($t['title']) . '</button>';
         if ($t['description']) {
             echo '    <div class="task-desc text-muted small">' . h(mb_strimwidth($t['description'], 0, 100, '…')) . '</div>';
         }
@@ -820,6 +1190,13 @@ function renderTaskList(array $tasks, string $emptyMsg): void
         echo '  <div class="task-item-actions d-flex align-items-center gap-2 flex-shrink-0">';
         // Status badge
         echo statusBadge($status);
+        // Open linked lead (if any)
+        if ($leadId) {
+            echo '<a href="lead_view.php?id=' . $leadId . '"
+                     class="btn btn-sm btn-outline-primary" title="Open linked lead">
+                    <i class="bi bi-person-lines-fill"></i>
+                  </a>';
+        }
         // Attachment download
         if ($t['file_path']) {
             echo '<a href="download.php?path=' . urlencode($t['file_path']) . '" target="_blank"

@@ -282,7 +282,7 @@ include __DIR__ . '/includes/header.php';
             <th>Deadline</th>
             <th>Completed At</th>
             <th>Completion Notes</th>
-            <th class="text-center pe-3">Files</th>
+            <th class="pe-3">Media</th>
           </tr>
         </thead>
         <tbody>
@@ -340,21 +340,46 @@ include __DIR__ . '/includes/header.php';
               <span class="text-muted small">—</span>
               <?php endif; ?>
             </td>
-            <td class="text-center pe-3">
-              <?php if ($t['file_path']): ?>
-              <a href="download.php?path=<?= urlencode($t['file_path']) ?>" target="_blank"
-                 class="btn btn-xs btn-outline-secondary me-1" title="Task attachment">
-                <i class="bi bi-paperclip"></i>
-              </a>
-              <?php endif; ?>
-              <?php if ($t['proof_file']): ?>
-              <a href="download.php?path=<?= urlencode($t['proof_file']) ?>" target="_blank"
-                 class="btn btn-xs btn-outline-success" title="Proof of completion">
-                <i class="bi bi-file-check"></i>
-              </a>
-              <?php endif; ?>
-              <?php if (!$t['file_path'] && !$t['proof_file']): ?>
+            <td class="pe-3" style="min-width:170px">
+              <?php
+                $callRec = $t['call_recording'] ?? '';
+                $hasAny  = $t['file_path'] || $t['proof_file'] || $callRec;
+              ?>
+              <?php if (!$hasAny): ?>
               <span class="text-muted small">—</span>
+              <?php else: ?>
+              <div class="d-flex flex-column gap-1">
+                <?php if ($t['file_path']): ?>
+                <a href="download.php?path=<?= urlencode($t['file_path']) ?>" target="_blank"
+                   class="btn btn-xs btn-outline-secondary text-start"
+                   title="<?= h(basename($t['file_path'])) ?>">
+                  <i class="bi bi-paperclip me-1"></i>Attachment
+                  <span class="text-muted ms-1" style="font-size:.68rem">
+                    <?= h(mb_strimwidth(basename($t['file_path']), 0, 18, '…')) ?>
+                  </span>
+                </a>
+                <?php endif; ?>
+                <?php if ($t['proof_file']): ?>
+                <a href="download.php?path=<?= urlencode($t['proof_file']) ?>" target="_blank"
+                   class="btn btn-xs btn-outline-success text-start"
+                   title="<?= h(basename($t['proof_file'])) ?>">
+                  <i class="bi bi-file-check me-1"></i>Proof
+                  <span class="text-muted ms-1" style="font-size:.68rem">
+                    <?= h(mb_strimwidth(basename($t['proof_file']), 0, 18, '…')) ?>
+                  </span>
+                </a>
+                <?php endif; ?>
+                <?php if ($callRec): ?>
+                <a href="download.php?path=<?= urlencode($callRec) ?>" target="_blank"
+                   class="btn btn-xs btn-outline-primary text-start"
+                   title="<?= h(basename($callRec)) ?>">
+                  <i class="bi bi-mic me-1"></i>Recording
+                  <span class="text-muted ms-1" style="font-size:.68rem">
+                    <?= h(mb_strimwidth(basename($callRec), 0, 18, '…')) ?>
+                  </span>
+                </a>
+                <?php endif; ?>
+              </div>
               <?php endif; ?>
             </td>
           </tr>

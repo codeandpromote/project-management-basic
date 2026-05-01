@@ -39,6 +39,7 @@ $lat      = (float)($_POST['lat']      ?? 0);
 $lng      = (float)($_POST['lng']      ?? 0);
 $accuracy = (int)($_POST['accuracy']   ?? 0);
 $taskId   = (int)($_POST['task_id']    ?? 0)  ?: null;
+$leadId   = (int)($_POST['lead_id']    ?? 0)  ?: null;
 $notes    = trim($_POST['notes']       ?? '');
 $noGps    = ($_POST['no_gps']          ?? '0') === '1';
 
@@ -76,6 +77,40 @@ if ($taskId) {
     }
 }
 
+// Validate lead_id: worker must be assignee or creator
+if ($leadId) {
+    try {
+        $stLead = $db->prepare(
+            'SELECT id FROM leads
+              WHERE id = ? AND is_deleted = 0
+                AND (assigned_to = ? OR creator_id = ?)
+              LIMIT 1'
+        );
+        $stLead->execute([$leadId, $user['id'], $user['id']]);
+        if (!$stLead->fetch()) { $leadId = null; }
+    } catch (PDOException $e) {
+        $leadId = null; // leads table missing — skip silently
+    }
+}
+
+// Photo handling — mandatory when a lead is tagged
+$photoPath = null;
+if ($leadId) {
+    if (empty($_FILES['photo']['name'])) {
+        exit(json_encode([
+            'success' => false,
+            'message' => 'A photo is required when visiting a lead. Please capture and upload one.',
+        ]));
+    }
+}
+if (!empty($_FILES['photo']['name'])) {
+    $photoUpload = handleFileUpload('photo', 'visits');
+    if (!$photoUpload['success']) {
+        exit(json_encode(['success' => false, 'message' => 'Photo upload failed: ' . $photoUpload['message']]));
+    }
+    $photoPath = $photoUpload['path'];
+}
+
 try {
     // Rate limit: max 1 log per minute per user.
     // Use PHP-generated IST timestamp so the comparison stays in the same timezone
@@ -95,14 +130,71 @@ try {
         ]));
     }
 
-    $db->prepare(
-        'INSERT INTO location_logs (user_id, log_date, lat, lng, accuracy, task_id, notes, logged_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-    )->execute([
-        $user['id'], $logDate, $lat, $lng,
-        $accuracy ?: null, $taskId,
-        $notes ?: null, $loggedAt,
-    ]);
+    // Insert with lead_id + photo if the columns exist; graceful fallback otherwise
+    try {
+        $db->prepare(
+            'INSERT INTO location_logs (user_id, log_date, lat, lng, accuracy, task_id, lead_id, notes, photo, logged_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        )->execute([
+            $user['id'], $logDate, $lat, $lng,
+            $accuracy ?: null, $taskId, $leadId,
+            $notes ?: null, $photoPath, $loggedAt,
+        ]);
+    } catch (PDOException $e) {
+        // Newer columns may not exist — fall back to the minimum set
+        try {
+            $db->prepare(
+                'INSERT INTO location_logs (user_id, log_date, lat, lng, accuracy, task_id, lead_id, notes, logged_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $user['id'], $logDate, $lat, $lng,
+                $accuracy ?: null, $taskId, $leadId,
+                $notes ?: null, $loggedAt,
+            ]);
+            $photoPath = null;
+        } catch (PDOException $e2) {
+            $db->prepare(
+                'INSERT INTO location_logs (user_id, log_date, lat, lng, accuracy, task_id, notes, logged_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+            )->execute([
+                $user['id'], $logDate, $lat, $lng,
+                $accuracy ?: null, $taskId,
+                $notes ?: null, $loggedAt,
+            ]);
+            $leadId = null;
+            $photoPath = null;
+        }
+    }
+
+    // Also log a "visit" activity on the lead, bump its last_activity_at,
+    // and auto-promote the linked daily task (if any) from pending → in_progress.
+    $leadVisitLogged  = false;
+    $leadTaskPromoted = false;
+    if ($leadId) {
+        try {
+            $db->prepare(
+                "INSERT INTO lead_activities
+                   (lead_id, user_id, activity_type, outcome, notes)
+                 VALUES (?, ?, 'visit', 'pending', ?)"
+            )->execute([
+                $leadId, $user['id'],
+                $notes !== '' ? $notes : 'GPS check-in at lead location',
+            ]);
+            $db->prepare('UPDATE leads SET last_activity_at = ? WHERE id = ?')
+               ->execute([$loggedAt, $leadId]);
+            $leadVisitLogged = true;
+        } catch (PDOException $ignored) { /* lead_activities missing — skip */ }
+
+        // Promote the linked daily task if it's still pending
+        try {
+            $stLt = $db->prepare(
+                "UPDATE tasks SET status = 'in_progress', updated_at = ?
+                  WHERE lead_id = ? AND user_id = ? AND status = 'pending'"
+            );
+            $stLt->execute([$loggedAt, $leadId, $user['id']]);
+            $leadTaskPromoted = $stLt->rowCount() > 0;
+        } catch (PDOException $ignored) { /* lead_id column missing — skip */ }
+    }
 
     // If the worker tagged this log to a pending task, auto-move it to 'in_progress'.
     // Only pending tasks are promoted — already in_progress / completed tasks are left alone.
@@ -127,7 +219,9 @@ try {
     $todayCount = (int)$stCount->fetchColumn();
 
     $baseMsg = $noGps ? 'Activity logged (no GPS).' : 'Location logged successfully.';
-    if ($taskPromoted) { $baseMsg .= ' Task moved to In Progress.'; }
+    if ($taskPromoted)     { $baseMsg .= ' Task moved to In Progress.'; }
+    if ($leadVisitLogged)  { $baseMsg .= ' Visit recorded on lead.'; }
+    if ($leadTaskPromoted) { $baseMsg .= ' Linked daily task moved to In Progress.'; }
 
     exit(json_encode([
         'success'       => true,

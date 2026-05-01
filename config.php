@@ -27,9 +27,10 @@ define('GEOFENCE_RADIUS',  100);             // metres
 define('SITE_NAME',   'HRMS Portal');
 define('BASE_URL',    'http://localhost/hrms_software/');
 define('UPLOAD_PATH', __DIR__ . '/uploads/');
-define('MAX_FILE_MB',  5);
+define('MAX_FILE_MB',  30);
 define('MAX_FILE_BYTES', MAX_FILE_MB * 1024 * 1024);
-define('ALLOWED_EXT', ['pdf','doc','docx','xls','xlsx','png','jpg','jpeg','zip','txt']);
+define('ALLOWED_EXT', ['pdf','doc','docx','xls','xlsx','png','jpg','jpeg','zip','txt',
+                       'mp3','m4a','wav','ogg','webm','amr','aac']);
 
 // ── Session ───────────────────────────────────────────────────
 define('SESSION_LIFETIME', 7200); // seconds (2 h)

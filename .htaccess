@@ -1,0 +1,19 @@
+# ============================================================
+#  HRMS · Apache overrides
+# ============================================================
+# NOTE on upload limits:
+# Hostinger (and most modern hosts) run PHP as FastCGI / PHP-FPM,
+# which ignores `php_value` directives in .htaccess — and worse,
+# on some configurations Apache returns HTTP 500 when it sees them.
+#
+# So we DO NOT put php_value here.
+# Instead, set upload_max_filesize = 32M and post_max_size = 36M
+# via the Hostinger panel:  hPanel → Advanced → PHP Configuration.
+#
+# Only directives that are always safe go below.
+
+# Serve .php as UTF-8 by default
+AddDefaultCharset UTF-8
+
+# Prevent directory listing of /uploads/
+Options -Indexes

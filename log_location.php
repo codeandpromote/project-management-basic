@@ -34,6 +34,26 @@ try {
     // tasks table query failed — proceed without tasks
 }
 
+// Fetch assigned leads for the selector
+$myActiveLeads = [];
+try {
+    $stL = $db->prepare(
+        "SELECT id, name, phone FROM leads
+          WHERE is_deleted = 0
+            AND status NOT IN ('won','lost')
+            AND (assigned_to = ? OR creator_id = ?)
+          ORDER BY
+            CASE WHEN next_followup_date = CURDATE() THEN 0 ELSE 1 END,
+            next_followup_date ASC,
+            name ASC
+          LIMIT 30"
+    );
+    $stL->execute([$uid, $uid]);
+    $myActiveLeads = $stL->fetchAll();
+} catch (PDOException $e) {
+    // leads table may not exist yet
+}
+
 $pageTitle = 'Log My Location';
 $csrf      = generateCSRF();
 require_once __DIR__ . '/includes/header.php';
@@ -87,6 +107,24 @@ require_once __DIR__ . '/includes/header.php';
         </select>
       </div>
 
+      <!-- Lead selector -->
+      <?php if (!empty($myActiveLeads)): ?>
+      <div class="mb-3">
+        <label for="leadSelect" class="form-label fw-semibold small mb-1">
+          <i class="bi bi-person-lines-fill me-1"></i>Link to Lead <span class="text-muted fw-normal">(Optional)</span>
+        </label>
+        <select id="leadSelect" class="form-select form-select-sm">
+          <option value="">— No lead —</option>
+          <?php foreach ($myActiveLeads as $ld): ?>
+          <option value="<?= (int)$ld['id'] ?>"><?= h($ld['name'] . ' · ' . $ld['phone']) ?></option>
+          <?php endforeach; ?>
+        </select>
+        <div class="form-text" style="font-size:.72rem">
+          Tagging a lead logs this GPS ping as a site visit on that lead.
+        </div>
+      </div>
+      <?php endif; ?>
+
       <!-- Notes -->
       <div class="mb-3">
         <label for="notesInput" class="form-label fw-semibold small mb-1">
@@ -94,6 +132,20 @@ require_once __DIR__ . '/includes/header.php';
         </label>
         <input type="text" id="notesInput" class="form-control form-control-sm"
                placeholder="e.g. Arrived at site, Leaving warehouse…" maxlength="255">
+      </div>
+
+      <!-- Photo (required when a lead is tagged) -->
+      <div class="mb-3" id="photoWrap">
+        <label for="photoInput" class="form-label fw-semibold small mb-1">
+          <i class="bi bi-camera-fill me-1"></i>Photo
+          <span id="photoReqMark" class="text-danger" style="display:none">*</span>
+          <span id="photoOptMark" class="text-muted fw-normal">(Optional unless a lead is tagged)</span>
+        </label>
+        <input type="file" id="photoInput" class="form-control form-control-sm"
+               accept="image/jpeg,image/png" capture="environment">
+        <div class="form-text" style="font-size:.72rem">
+          Large photos are auto-compressed. Required when visiting a lead.
+        </div>
       </div>
 
       <!-- Save / No-GPS buttons -->
@@ -161,7 +213,7 @@ require_once __DIR__ . '/includes/header.php';
       return;
     }
 
-    setStatus('info', 'Getting your GPS location\u2026', true);
+    setStatus('info', 'Getting your GPS location...', true);
 
     navigator.geolocation.getCurrentPosition(
       // Success
@@ -195,9 +247,26 @@ require_once __DIR__ . '/includes/header.php';
   function doSave(isNoGps) {
     if (saving) { return; }
     saving = true;
+
+    var leadSel   = document.getElementById('leadSelect');
+    var leadVal   = leadSel ? leadSel.value : '';
+    var photoEl   = document.getElementById('photoInput');
+    var photoFile = photoEl && photoEl.files ? photoEl.files[0] : null;
+
+    // If a lead is tagged, photo is MANDATORY
+    if (leadVal && !photoFile) {
+      resultMsg.className = 'alert alert-warning mt-3';
+      resultMsg.innerHTML = '<i class="bi bi-exclamation-triangle-fill me-1"></i>'
+        + 'Please take and upload a photo of your lead visit before saving.';
+      resultMsg.style.display = '';
+      saving = false;
+      return;
+    }
+
     saveBtn.disabled = true;
     noGpsBtn.disabled = true;
-    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving\u2026';
+    saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>'
+      + (photoFile ? 'Compressing photo...' : 'Saving...');
 
     // Build client timestamp in IST-like local format
     var now = new Date();
@@ -205,21 +274,32 @@ require_once __DIR__ . '/includes/header.php';
     var clientTime = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate())
       + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
 
-    var body = 'action=log_location'
-      + '&csrf_token=' + encodeURIComponent('<?= addslashes($csrf) ?>')
-      + '&lat=' + (isNoGps ? '0' : lat)
-      + '&lng=' + (isNoGps ? '0' : lng)
-      + '&accuracy=' + (isNoGps ? '0' : acc)
-      + '&no_gps=' + (isNoGps ? '1' : '0')
-      + '&task_id=' + encodeURIComponent(taskSelect.value)
-      + '&notes=' + encodeURIComponent(notesInput.value)
-      + '&client_time=' + encodeURIComponent(clientTime);
+    function buildAndSend(finalPhoto) {
+      var fd = new FormData();
+      fd.append('action',      'log_location');
+      fd.append('csrf_token',  '<?= addslashes($csrf) ?>');
+      fd.append('lat',         isNoGps ? '0' : String(lat));
+      fd.append('lng',         isNoGps ? '0' : String(lng));
+      fd.append('accuracy',    isNoGps ? '0' : String(acc));
+      fd.append('no_gps',      isNoGps ? '1' : '0');
+      fd.append('task_id',     taskSelect.value || '');
+      fd.append('lead_id',     leadVal);
+      fd.append('notes',       notesInput.value || '');
+      fd.append('client_time', clientTime);
+      if (finalPhoto) { fd.append('photo', finalPhoto, finalPhoto.name || 'visit.jpg'); }
+      saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading...';
+      return fetch('location_handler.php', { method: 'POST', body: fd });
+    }
 
-    fetch('location_handler.php', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body
-    })
+    var sendPromise;
+    if (photoFile && typeof compressImageIfNeeded === 'function') {
+      sendPromise = compressImageIfNeeded(photoFile)
+        .then(function (r) { return buildAndSend(r && r.file ? r.file : photoFile); });
+    } else {
+      sendPromise = buildAndSend(photoFile);
+    }
+
+    sendPromise
     .then(function(r) { return r.json(); })
     .then(function(data) {
       if (data.success) {
@@ -259,6 +339,19 @@ require_once __DIR__ . '/includes/header.php';
   saveBtn.addEventListener('click', function() { doSave(noGps); });
   noGpsBtn.addEventListener('click', function() { enableNoGpsMode(); });
 
+  // Toggle photo-required markers based on whether a lead is selected
+  var leadSelect = document.getElementById('leadSelect');
+  if (leadSelect) {
+    var photoReqMark = document.getElementById('photoReqMark');
+    var photoOptMark = document.getElementById('photoOptMark');
+    var photoInput   = document.getElementById('photoInput');
+    leadSelect.addEventListener('change', function () {
+      var tagged = !!leadSelect.value;
+      if (photoReqMark) { photoReqMark.style.display = tagged ? '' : 'none'; }
+      if (photoOptMark) { photoOptMark.style.display = tagged ? 'none' : ''; }
+      if (photoInput)   { photoInput.required = tagged; }
+    });
+  }
 })();
 </script>
 
